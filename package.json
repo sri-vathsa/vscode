@@ -59,6 +59,7 @@
   },
   "dependencies": {
     "@vscode/vscode-languagedetection": "1.0.15",
+    "argon2": "^0.28.2",
     "applicationinsights": "1.0.8",
     "chokidar": "3.5.1",
     "graceful-fs": "4.2.6",

@@ -70,6 +70,7 @@ import { ExtensionScanner, ExtensionScannerInput, IExtensionReference } from 'vs
 import { IGetEnvironmentDataArguments, IRemoteAgentEnvironmentDTO, IScanExtensionsArguments, IScanSingleExtensionArguments } from 'vs/workbench/services/remote/common/remoteAgentEnvironmentChannel';
 import { REMOTE_FILE_SYSTEM_CHANNEL_NAME } from 'vs/workbench/services/remote/common/remoteAgentFileSystemChannel';
 import { RemoteExtensionLogFileName } from 'vs/workbench/services/remote/common/remoteAgentService';
+import { parse } from 'querystring';
 
 export type IRawURITransformerFactory = (remoteAuthority: string) => IRawURITransformer;
 export const IRawURITransformerFactory = createDecorator<IRawURITransformerFactory>('rawURITransformerFactory');
@@ -583,9 +584,35 @@ export async function main(options: IServerOptions): Promise<void> {
 					return;
 				}
 
-				//#region static
 				if (pathname === '/') {
 					return serveFile(logService, req, res, await authenticated(req) ? devMode ? options.mainDev || WEB_MAIN_DEV : options.main || WEB_MAIN : LOGIN);
+				}
+				if (pathname === '/login') {
+					const password = (await collectRequestData(req)).password;
+					const passwordMethod = getPasswordMethod(parsedArgs.hashedPassword);
+					const { isPasswordValid, hashedPassword } = await handlePasswordValidation({
+						passwordMethod,
+						hashedPasswordFromArgs: parsedArgs.hashedPassword,
+						passwordFromRequestBody: password,
+						passwordFromArgs: parsedArgs.password,
+					});
+
+					if (isPasswordValid) {
+						// The hash does not add any actual security but we do it for
+						// obfuscation purposes (and as a side effect it handles escaping).
+						res.writeHead(302, {
+							'Location': '/',
+							'Set-Cookie': `key=${hashedPassword}`,
+							'Content-Type': 'text/plain'
+						});
+						return res.end('');
+					} else {
+						res.writeHead(302, {
+							'Location': '/',
+							'Content-Type': 'text/plain'
+						});
+						return res.end('');
+					}
 				}
 				if (!await ensureAuthenticated(req, res)) {
 					return;
@@ -600,6 +627,14 @@ export async function main(options: IServerOptions): Promise<void> {
 						'display': 'standalone'
 					}));
 				}
+				if (pathname === '/vscode-remote-resource') {
+					const filePath = parsedUrl.query['path'];
+					const fsPath = typeof filePath === 'string' && URI.from({ scheme: 'file', path: filePath }).fsPath;
+					if (!fsPath) {
+						return serveError(req, res, 400, 'Bad Request.');
+					}
+					return serveFile(logService, req, res, fsPath);
+				}
 				if (pathname) {
 					let relativeFilePath;
 					if (/^\/static\//.test(pathname)) {
@@ -609,18 +644,8 @@ export async function main(options: IServerOptions): Promise<void> {
 					}
 					return serveFile(logService, req, res, path.join(APP_ROOT, relativeFilePath));
 				}
-				//#region static end
 
-				//#region headless
-				if (pathname === '/vscode-remote-resource') {
-					const filePath = parsedUrl.query['path'];
-					const fsPath = typeof filePath === 'string' && URI.from({ scheme: 'file', path: filePath }).fsPath;
-					if (!fsPath) {
-						return serveError(req, res, 400, 'Bad Request.');
-					}
-					return serveFile(logService, req, res, fsPath);
-				}
-				//#region headless end
+
 
 				// TODO uri callbacks ?
 				logService.error(`${req.method} ${req.url} not found`);
@@ -922,6 +947,25 @@ export async function main(options: IServerOptions): Promise<void> {
 	});
 }
 
+function collectRequestData(request: http.IncomingMessage): Promise<Record<string, string>> {
+	return new Promise(resolve => {
+		const FORM_URLENCODED = 'application/x-www-form-urlencoded';
+		if (request.headers['content-type'] === FORM_URLENCODED) {
+			let body = '';
+			request.on('data', chunk => {
+				body += chunk.toString();
+			});
+			request.on('end', () => {
+				const item = parse(body) as Record<string, string>;
+				resolve(item);
+			});
+		}
+		else {
+			resolve({});
+		}
+	});
+}
+
 /** Ensures that the input is sanitized by checking
  * - it's a string
  * - greater than 0 characters
@@ -949,9 +993,10 @@ export const authenticated = async (req: http.IncomingMessage): Promise<boolean>
 		return true;
 	}
 	const passwordMethod = getPasswordMethod(parsedArgs.hashedPassword);
+	const cookies = parseCookies(req);
 	const isCookieValidArgs: IsCookieValidArgs = {
 		passwordMethod,
-		cookieKey: sanitizeString(parseCookies(req).key),
+		cookieKey: sanitizeString(cookies.key),
 		passwordFromArgs: parsedArgs.password || '',
 		hashedPasswordFromArgs: parsedArgs.hashedPassword,
 	};
@@ -967,7 +1012,10 @@ function parseCookies(request: http.IncomingMessage): Record<string, string> {
 	rc && rc.split(';').forEach(cookie => {
 		let parts = cookie.split('=');
 		if (parts.length > 0) {
-			cookies[parts.shift()!.trim()] = decodeURI(parts.join('='));
+			const name = parts.shift()!.trim();
+			let value = decodeURI(parts.join('='));
+			value = value.substring(1, value.length - 1);
+			cookies[name] = value;
 		}
 	});
 

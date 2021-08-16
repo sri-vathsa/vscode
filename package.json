@@ -62,6 +62,7 @@
     "argon2": "^0.28.2",
     "applicationinsights": "1.0.8",
     "chokidar": "3.5.1",
+    "express": "^4.17.1",
     "graceful-fs": "4.2.6",
     "http-proxy-agent": "^2.1.0",
     "https-proxy-agent": "^2.2.3",

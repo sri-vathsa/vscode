@@ -56,7 +56,8 @@ import { IGetEnvironmentDataArguments, IRemoteAgentEnvironmentDTO, IScanExtensio
 import { REMOTE_FILE_SYSTEM_CHANNEL_NAME } from 'vs/workbench/services/remote/common/remoteAgentFileSystemChannel';
 import { RemoteExtensionLogFileName } from 'vs/workbench/services/remote/common/remoteAgentService';
 import { args, devMode } from 'vs/server/node/args';
-import { handleHttp, IServerOptions, rawURITransformerFactory } from 'vs/server/node/server.http';
+import { handleHttp, rawURITransformerFactory } from 'vs/server/node/server.http';
+import { IServerOptions } from 'vs/server/node/server.opts';
 
 export type IRawURITransformerFactory = (remoteAuthority: string) => IRawURITransformer;
 export const IRawURITransformerFactory = createDecorator<IRawURITransformerFactory>('rawURITransformerFactory');
@@ -426,6 +427,13 @@ export async function main(options: IServerOptions): Promise<void> {
 		// Delay creation of spdlog for perf reasons (https://github.com/microsoft/vscode/issues/72906)
 		bufferLogService.logger = new SpdLogLogger('main', join(environmentService.logsPath, `${RemoteExtensionLogFileName}.log`), true, bufferLogService.getLevel());
 
-		handleHttp(options, instantiationService, logService, environmentService, onDidClientConnectEmitter, channelServer);
+		handleHttp({
+			serverOptions: options,
+			instantiationService,
+			logService,
+			environmentService,
+			onDidClientConnectEmitter,
+			channelServer
+		});
 	});
 }

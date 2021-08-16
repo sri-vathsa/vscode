@@ -1,8 +1,7 @@
-import * as http from 'http';
 import * as crypto from 'crypto';
 import * as argon2 from 'argon2';
+import * as express from 'express';
 import { ServerParsedArgs } from 'vs/server/node/args';
-import { serveError } from 'vs/server/node/http';
 
 /** Ensures that the input is sanitized by checking
  * - it's a string
@@ -15,50 +14,23 @@ export function sanitizeString(str: string): string {
 	return typeof str === 'string' && str.trim().length > 0 ? str.trim() : '';
 }
 
-export const ensureAuthenticated = async (args: ServerParsedArgs, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> => {
-	const isAuthenticated = await authenticated(args, req);
-	if (!isAuthenticated) {
-		serveError(req, res, 401, 'Unauthorized');
-	}
-	return isAuthenticated;
-};
-
 /**
  * Return true if authenticated via cookies.
  */
-export const authenticated = async (args: ServerParsedArgs, req: http.IncomingMessage): Promise<boolean> => {
+export const authenticated = async (args: ServerParsedArgs, req: express.Request): Promise<boolean> => {
 	if (!args.password && !args.hashedPassword) {
 		return true;
 	}
 	const passwordMethod = getPasswordMethod(args.hashedPassword);
-	const cookies = parseCookies(req);
 	const isCookieValidArgs: IsCookieValidArgs = {
 		passwordMethod,
-		cookieKey: sanitizeString(cookies.key),
+		cookieKey: sanitizeString(req.cookies.key),
 		passwordFromArgs: args.password || '',
 		hashedPasswordFromArgs: args.hashedPassword,
 	};
 
 	return await isCookieValid(isCookieValidArgs);
 };
-
-function parseCookies(request: http.IncomingMessage): Record<string, string> {
-	const cookies: Record<string, string> = {},
-		rc = request.headers.cookie;
-
-	// eslint-disable-next-line code-no-unused-expressions
-	rc && rc.split(';').forEach(cookie => {
-		let parts = cookie.split('=');
-		if (parts.length > 0) {
-			const name = parts.shift()!.trim();
-			let value = decodeURI(parts.join('='));
-			value = value.substring(1, value.length - 1);
-			cookies[name] = value;
-		}
-	});
-
-	return cookies;
-}
 
 export type PasswordMethod = 'ARGON2' | 'PLAIN_TEXT';
 
@@ -88,7 +60,7 @@ type HandlePasswordValidationArgs = {
 	/** The PasswordMethod */
 	passwordMethod: PasswordMethod
 	/** The password provided by the user */
-	passwordFromRequestBody: string
+	passwordFromRequestBody: string | undefined
 	/** The password set in PASSWORD or config */
 	passwordFromArgs: string | undefined
 	/** The hashed-password set in HASHED_PASSWORD or config */
@@ -174,24 +146,26 @@ export async function handlePasswordValidation({
 		hashedPassword: '',
 	};
 
-	switch (passwordMethod) {
-		case 'PLAIN_TEXT': {
-			const isValid = passwordFromArgs ? safeCompare(passwordFromRequestBody, passwordFromArgs) : false;
-			passwordValidation.isPasswordValid = isValid;
+	if (passwordFromRequestBody) {
+		switch (passwordMethod) {
+			case 'PLAIN_TEXT': {
+				const isValid = passwordFromArgs ? safeCompare(passwordFromRequestBody, passwordFromArgs) : false;
+				passwordValidation.isPasswordValid = isValid;
 
-			const hashedPassword = await hash(passwordFromRequestBody);
-			passwordValidation.hashedPassword = hashedPassword;
-			break;
-		}
-		case 'ARGON2': {
-			const isValid = await isHashMatch(passwordFromRequestBody, hashedPasswordFromArgs || '');
-			passwordValidation.isPasswordValid = isValid;
+				const hashedPassword = await hash(passwordFromRequestBody);
+				passwordValidation.hashedPassword = hashedPassword;
+				break;
+			}
+			case 'ARGON2': {
+				const isValid = await isHashMatch(passwordFromRequestBody, hashedPasswordFromArgs || '');
+				passwordValidation.isPasswordValid = isValid;
 
-			passwordValidation.hashedPassword = hashedPasswordFromArgs || '';
-			break;
+				passwordValidation.hashedPassword = hashedPasswordFromArgs || '';
+				break;
+			}
+			default:
+				break;
 		}
-		default:
-			break;
 	}
 
 	return passwordValidation;

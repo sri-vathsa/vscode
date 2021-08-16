@@ -1,8 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as http from 'http';
 import { ILogService } from 'vs/platform/log/common/log';
-import { parse } from 'querystring';
+import { Request, Response } from 'express';
 
 // TODO is it enough?
 const textMimeType = new Map([
@@ -33,26 +32,7 @@ export function getMediaMime(forPath: string): string | undefined {
 	return mapExtToMediaMimes.get(ext.toLowerCase());
 }
 
-export function collectRequestData(request: http.IncomingMessage): Promise<Record<string, string>> {
-	return new Promise(resolve => {
-		const FORM_URLENCODED = 'application/x-www-form-urlencoded';
-		if (request.headers['content-type'] === FORM_URLENCODED) {
-			let body = '';
-			request.on('data', chunk => {
-				body += chunk.toString();
-			});
-			request.on('end', () => {
-				const item = parse(body) as Record<string, string>;
-				resolve(item);
-			});
-		}
-		else {
-			resolve({});
-		}
-	});
-}
-
-export async function serveFile(logService: ILogService, req: http.IncomingMessage, res: http.ServerResponse, filePath: string, responseHeaders: http.OutgoingHttpHeaders = {}) {
+export async function serveFile(logService: ILogService, req: Request, res: Response, filePath: string) {
 	try {
 
 		// Sanity checks
@@ -63,15 +43,13 @@ export async function serveFile(logService: ILogService, req: http.IncomingMessa
 		// Check if file modified since
 		const etag = `W/"${[stat.ino, stat.size, stat.mtime.getTime()].join('-')}"`; // weak validator (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag)
 		if (req.headers['if-none-match'] === etag) {
-			res.writeHead(304);
+			res.status(304);
 			return res.end();
 		}
 
-		// Headers
-		responseHeaders['Content-Type'] = textMimeType.get(path.extname(filePath)) || getMediaMime(filePath) || 'text/plain';
-		responseHeaders['Etag'] = etag;
-
-		res.writeHead(200, responseHeaders);
+		res.header('Content-Type', textMimeType.get(path.extname(filePath)) || getMediaMime(filePath) || 'text/plain');
+		res.header('Etag', etag);
+		res.status(200);
 
 		// Data
 		fs.createReadStream(filePath).pipe(res);
@@ -82,7 +60,7 @@ export async function serveFile(logService: ILogService, req: http.IncomingMessa
 	}
 }
 
-export function serveError(req: http.IncomingMessage, res: http.ServerResponse, errorCode: number, errorMessage: string): void {
+export function serveError(req: Request, res: Response, errorCode: number, errorMessage: string): void {
 	res.writeHead(errorCode, { 'Content-Type': 'text/plain' });
 	res.end(errorMessage);
 }

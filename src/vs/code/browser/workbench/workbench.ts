@@ -607,6 +607,17 @@ async function doStart(): Promise<IDisposable> {
 	};
 	//#endregion
 
+	const getLoggedInUser: ICommand = {
+		id: 'gitpod.api.getLoggedInUser',
+		handler: () => {
+			if (devMode) {
+				throw new Error('not supported in dev mode');
+			}
+			return window.gitpod.service.server.getLoggedInUser();
+		}
+	};
+
+
 	subscriptions.add(create(document.body, {
 		remoteAuthority,
 		webviewEndpoint: webviewEndpoint.toString(),
@@ -730,7 +741,8 @@ async function doStart(): Promise<IDisposable> {
 		tunnelProvider,
 		commands: [
 			getTunnels,
-			connectLocalApp
+			connectLocalApp,
+			getLoggedInUser
 		]
 	}));
 	return subscriptions;

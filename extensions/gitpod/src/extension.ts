@@ -68,19 +68,39 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	//#region server connection
 	const factory = new JsonRpcProxyFactory<GitpodServer>();
-	const gitpodService = new GitpodServiceImpl<GitpodClient, GitpodServer>(factory.createProxy());
+	type UsedGitpodFunction = [
+		'getWorkspace',
+		'openPort',
+		'stopWorkspace',
+		'setWorkspaceTimeout',
+		'getWorkspaceTimeout',
+		'getLoggedInUser',
+		'takeSnapshot',
+		'controlAdmission',
+		'sendHeartBeat'
+	];
+	const gitpodFunctions: UsedGitpodFunction = [
+		'getWorkspace',
+		'openPort',
+		'stopWorkspace',
+		'setWorkspaceTimeout',
+		'getWorkspaceTimeout',
+		'getLoggedInUser',
+		'takeSnapshot',
+		'controlAdmission',
+		'sendHeartBeat'
+	];
+	type Union<Tuple extends any[], Union = never> = Tuple[number] | Union;
+	const gitpodService: Omit<GitpodServiceImpl<GitpodClient, GitpodServer>, 'server'> & {
+		server: Pick<GitpodServer, Union<UsedGitpodFunction>>
+	} = new GitpodServiceImpl<GitpodClient, GitpodServer>(factory.createProxy()) as any;
 	const gitpodScopes = new Set<string>([
-		'function:getWorkspace',
-		'function:openPort',
-		'function:stopWorkspace',
-		'function:setWorkspaceTimeout',
-		'function:getWorkspaceTimeout',
 		'resource:workspace::' + workspaceId + '::get/update',
-		'function:accessCodeSyncStorage',
-		'function:getLoggedInUser',
-		'function:takeSnapshot',
-		'function:sendHeartBeat'
+		'function:accessCodeSyncStorage'
 	]);
+	for (const gitpodFunction of gitpodFunctions) {
+		gitpodScopes.add('function:' + gitpodFunction);
+	}
 	const pendingServerToken = (async () => {
 		const getTokenRequest = new GetTokenRequest();
 		getTokenRequest.setKind('gitpod');
@@ -129,8 +149,22 @@ export async function activate(context: vscode.ExtensionContext) {
 		});
 	})();
 
-	const pendingGetLoggedInUser = gitpodService.server.getLoggedInUser();
+	// const pendingGetLoggedInUser = gitpodService.server.getLoggedInUser();
+	const pendingGetOwner = gitpodService.server.getLoggedInUser();
+	const pendingGetUser = (async () => {
+		if (context.extensionMode === vscode.ExtensionMode.Development || !!process.env['VSCODE_DEV']) {
+			return pendingGetOwner;
+		}
+		return vscode.commands.executeCommand('gitpod.api.getLoggedInUser') as typeof pendingGetOwner;
+	})();
 	const pendingInstanceListener = gitpodService.listenToInstance(workspaceId);
+	const pendingWorkspaceOwned = (async () => {
+		const owner = await pendingGetOwner;
+		const user = await pendingGetUser;
+		const workspaceOwned = owner.id === user.id;
+		vscode.commands.executeCommand('setContext', 'gitpod.workspaceOwned', workspaceOwned);
+		return workspaceOwned;
+	})();
 	//#endregion
 
 	//#region workspace commands
@@ -158,45 +192,45 @@ export async function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('gitpod.reportIssue', () =>
 		vscode.env.openExternal(vscode.Uri.parse('https://github.com/gitpod-io/gitpod/issues/new/choose'))
 	));
-	context.subscriptions.push(vscode.commands.registerCommand('gitpod.stop.ws', () =>
-		gitpodService.server.stopWorkspace(workspaceId)
-	));
-	context.subscriptions.push(vscode.commands.registerCommand('gitpod.upgradeSubscription', () =>
-		vscode.env.openExternal(vscode.Uri.parse(new GitpodHostUrl(gitpodHost).asUpgradeSubscription().toString()))
-	));
-	context.subscriptions.push(vscode.commands.registerCommand('gitpod.ExtendTimeout', async () => {
-		try {
-			const result = await gitpodService.server.setWorkspaceTimeout(workspaceId, '180m');
-			if (result.resetTimeoutOnWorkspaces?.length > 0) {
-				vscode.window.showWarningMessage('Workspace timeout has been extended to three hours. This reset the workspace timeout for other workspaces.');
-			} else {
-				vscode.window.showInformationMessage('Workspace timeout has been extended to three hours.');
-			}
-		} catch (err) {
-			vscode.window.showErrorMessage(`Cannot extend workspace timeout: ${err.toString()}`);
-		}
-	}));
-	context.subscriptions.push(vscode.commands.registerCommand('gitpod.takeSnapshot', async () => {
-		try {
-			const snapshotId = await vscode.window.withProgress({
-				location: vscode.ProgressLocation.Notification,
-				cancellable: true,
-				title: 'Capturing workspace snapshot'
-			}, _ => {
-				return gitpodService.server.takeSnapshot({ workspaceId /*, layoutData?*/ });
-			});
-			const hostname = gitpodApi.getHost();
-			const uri = `https://${hostname}#snapshot/${snapshotId}`;
-			const copyAction = await vscode.window.showInformationMessage(`The current state is captured in a snapshot. Using [this link](${uri}) anybody can create their own copy of this workspace.`,
-				'Copy URL to Clipboard');
-			if (copyAction === 'Copy URL to Clipboard') {
-				await vscode.env.clipboard.writeText(uri);
-			}
-		} catch (err) {
-			console.error('cannot capture workspace snapshot', err);
-			await vscode.window.showErrorMessage(`Cannot capture workspace snapshot: ${err.toString()}`);
-		}
-	}));
+	// context.subscriptions.push(vscode.commands.registerCommand('gitpod.stop.ws', () =>
+	// 	gitpodService.server.stopWorkspace(workspaceId)
+	// ));
+	// context.subscriptions.push(vscode.commands.registerCommand('gitpod.upgradeSubscription', () =>
+	// 	vscode.env.openExternal(vscode.Uri.parse(new GitpodHostUrl(gitpodHost).asUpgradeSubscription().toString()))
+	// ));
+	// context.subscriptions.push(vscode.commands.registerCommand('gitpod.ExtendTimeout', async () => {
+	// 	try {
+	// 		const result = await gitpodService.server.setWorkspaceTimeout(workspaceId, '180m');
+	// 		if (result.resetTimeoutOnWorkspaces?.length > 0) {
+	// 			vscode.window.showWarningMessage('Workspace timeout has been extended to three hours. This reset the workspace timeout for other workspaces.');
+	// 		} else {
+	// 			vscode.window.showInformationMessage('Workspace timeout has been extended to three hours.');
+	// 		}
+	// 	} catch (err) {
+	// 		vscode.window.showErrorMessage(`Cannot extend workspace timeout: ${err.toString()}`);
+	// 	}
+	// }));
+	// context.subscriptions.push(vscode.commands.registerCommand('gitpod.takeSnapshot', async () => {
+	// 	try {
+	// 		const snapshotId = await vscode.window.withProgress({
+	// 			location: vscode.ProgressLocation.Notification,
+	// 			cancellable: true,
+	// 			title: 'Capturing workspace snapshot'
+	// 		}, _ => {
+	// 			return gitpodService.server.takeSnapshot({ workspaceId /*, layoutData?*/ });
+	// 		});
+	// 		const hostname = gitpodApi.getHost();
+	// 		const uri = `https://${hostname}#snapshot/${snapshotId}`;
+	// 		const copyAction = await vscode.window.showInformationMessage(`The current state is captured in a snapshot. Using [this link](${uri}) anybody can create their own copy of this workspace.`,
+	// 			'Copy URL to Clipboard');
+	// 		if (copyAction === 'Copy URL to Clipboard') {
+	// 			await vscode.env.clipboard.writeText(uri);
+	// 		}
+	// 	} catch (err) {
+	// 		console.error('cannot capture workspace snapshot', err);
+	// 		await vscode.window.showErrorMessage(`Cannot capture workspace snapshot: ${err.toString()}`);
+	// 	}
+	// }));
 	const communityStatusBarItem = vscode.window.createStatusBarItem({
 		id: 'gitpod.community',
 		name: 'Chat with us on Discourse',
@@ -210,6 +244,119 @@ export async function activate(context: vscode.ExtensionContext) {
 	communityStatusBarItem.show();
 
 	(async () => {
+		const workspaceOwned = await pendingWorkspaceOwned;
+		if (!workspaceOwned) {
+			return;
+		}
+		context.subscriptions.push(vscode.commands.registerCommand('gitpod.stop.ws', () =>
+			gitpodService.server.stopWorkspace(workspaceId)
+		));
+		context.subscriptions.push(vscode.commands.registerCommand('gitpod.upgradeSubscription', () =>
+			vscode.env.openExternal(vscode.Uri.parse(new GitpodHostUrl(gitpodHost).asUpgradeSubscription().toString()))
+		));
+		context.subscriptions.push(vscode.commands.registerCommand('gitpod.takeSnapshot', async () => {
+			try {
+				const snapshotId = await vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					cancellable: true,
+					title: 'Capturing workspace snapshot'
+				}, _ => {
+					return gitpodService.server.takeSnapshot({ workspaceId /*, layoutData?*/ });
+				});
+				const hostname = gitpodApi.getHost();
+				const uri = `https://${hostname}#snapshot/${snapshotId}`;
+				const copyAction = await vscode.window.showInformationMessage(`The current state is captured in a snapshot. Using [this link](${uri}) anybody can create their own copy of this workspace.`,
+					'Copy URL to Clipboard');
+				if (copyAction === 'Copy URL to Clipboard') {
+					await vscode.env.clipboard.writeText(uri);
+				}
+			} catch (err) {
+				console.error('cannot capture workspace snapshot', err);
+				await vscode.window.showErrorMessage(`Cannot capture workspace snapshot: ${err.toString()}`);
+			}
+		}));
+	})();
+
+	//#region workspace sharing
+	(async () => {
+		const owner = await pendingGetOwner;
+		const workspaceOwned = await pendingWorkspaceOwned;
+		const workspaceSharingStatusBarItem = vscode.window.createStatusBarItem('gitpod.workspaceSharing', vscode.StatusBarAlignment.Left);
+		workspaceSharingStatusBarItem.name = 'Workspace Sharing';
+		context.subscriptions.push(workspaceSharingStatusBarItem);
+		function setWorkspaceShared(workspaceShared: boolean): void {
+			if (workspaceOwned) {
+				vscode.commands.executeCommand('setContext', 'gitpod.workspaceShared', workspaceShared);
+				if (workspaceShared) {
+					workspaceSharingStatusBarItem.text = '$(broadcast) Shared';
+					workspaceSharingStatusBarItem.tooltip = 'Your workspace is currently shared. Anyone with the link can access this workspace.';
+					workspaceSharingStatusBarItem.command = 'gitpod.stopSharingWorkspace';
+				} else {
+					workspaceSharingStatusBarItem.text = '$(live-share) Share';
+					workspaceSharingStatusBarItem.tooltip = 'Your workspace is currently not shared. Only you can access it.';
+					workspaceSharingStatusBarItem.command = 'gitpod.shareWorkspace';
+				}
+			} else {
+				workspaceSharingStatusBarItem.text = '$(broadcast) Shared by ' + owner.name;
+				workspaceSharingStatusBarItem.tooltip = `You are currently accessing the workspace shared by ${owner.name}.`;
+			}
+			workspaceSharingStatusBarItem.show();
+		}
+		const listener = await pendingInstanceListener;
+		setWorkspaceShared(listener.info.workspace.shareable || false);
+		if (!workspaceOwned) {
+			return;
+		}
+		async function controlAdmission(level: GitpodServer.AdmissionLevel): Promise<void> {
+			try {
+				await vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					cancellable: true,
+					title: level === 'everyone' ? 'Sharing workspace...' : 'Stopping workspace sharing...'
+				}, _ => {
+					return gitpodService.server.controlAdmission(workspaceId, level);
+				});
+				setWorkspaceShared(level === 'everyone');
+				if (level === 'everyone') {
+					await vscode.window.showInformationMessage(`Your workspace is currently shared. Anyone with the link can access this workspace.`);
+				} else {
+					await vscode.window.showInformationMessage(`Your workspace is currently not shared. Only you can access it.`);
+				}
+			} catch (err) {
+				console.error('cannot controlAdmission', err);
+				if (level === 'everyone') {
+					await vscode.window.showErrorMessage(`Cannot share workspace: ${err.toString()}`);
+				} else {
+					await vscode.window.showInformationMessage(`Cannot stop workspace sharing: ${err.toString()}`);
+				}
+			}
+		}
+		context.subscriptions.push(vscode.commands.registerCommand('gitpod.shareWorkspace', () => controlAdmission('everyone')));
+		context.subscriptions.push(vscode.commands.registerCommand('gitpod.stopSharingWorkspace', () => controlAdmission('owner')));
+	})();
+	////#endregion
+
+	//#region workspace timeout
+	(async () => {
+		const workspaceOwned = await pendingWorkspaceOwned;
+		if (!workspaceOwned) {
+			return;
+		}
+
+		context.subscriptions.push(vscode.commands.registerCommand('gitpod.ExtendTimeout', async () => {
+			try {
+				const result = await gitpodService.server.setWorkspaceTimeout(workspaceId, '180m');
+				if (result.resetTimeoutOnWorkspaces?.length > 0) {
+					vscode.window.showWarningMessage('Workspace timeout has been extended to three hours. This reset the workspace timeout for other workspaces.');
+				} else {
+					vscode.window.showInformationMessage('Workspace timeout has been extended to three hours.');
+				}
+			} catch (err) {
+				vscode.window.showErrorMessage(`Cannot extend workspace timeout: ${err.toString()}`);
+			}
+		}));
+
+
 		const workspaceTimeout = await gitpodService.server.getWorkspaceTimeout(workspaceId);
 		if (!workspaceTimeout.canChange) {
 			return;
@@ -687,10 +834,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		const onDidChangeSessionsEmitter = new vscode.EventEmitter<vscode.AuthenticationProviderAuthenticationSessionsChangeEvent>();
 		try {
 			const resolveGitpodUser = async () => {
-				const user = await pendingGetLoggedInUser;
+				const owser = await pendingGetOwner;
 				return {
-					id: user.id,
-					accountName: user.name!
+					id: owser.id,
+					accountName: owser.name!
 				};
 			};
 			if (vscode.env.uiKind === vscode.UIKind.Web) {

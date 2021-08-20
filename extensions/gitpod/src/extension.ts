@@ -281,8 +281,13 @@ export async function activate(context: vscode.ExtensionContext) {
 	(async () => {
 		const owner = await pendingGetOwner;
 		const workspaceOwned = await pendingWorkspaceOwned;
-		const workspaceSharingStatusBarItem = vscode.window.createStatusBarItem('gitpod.workspaceSharing', vscode.StatusBarAlignment.Left);
-		workspaceSharingStatusBarItem.name = 'Workspace Sharing';
+		const workspaceSharingStatusBarItem = vscode.window.createStatusBarItem({
+			id: 'gitpod.workspaceSharing',
+			name: 'Workspace Sharing',
+			alignment: vscode.StatusBarAlignment.Left
+		});
+
+		// workspaceSharingStatusBarItem.name = 'Workspace Sharing';
 		context.subscriptions.push(workspaceSharingStatusBarItem);
 		function setWorkspaceShared(workspaceShared: boolean): void {
 			if (workspaceOwned) {
